@@ -2,7 +2,7 @@
 
 import { db } from '../db';
 import { members, roleMappingRules, eventCommittees, committeeSections, organizations } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
 export async function generateCommittee(
@@ -81,4 +81,43 @@ export async function generateCustomCommittee(
 
   // Panggil generateCommittee, jangan panggil diri sendiri!
   return await generateCommittee(eventId, requirements);
+}
+
+// Tambahkan di bagian paling bawah lib/actions/committee.ts
+export async function moveCommitteeMember(
+  eventId: string,
+  memberId: string,
+  newSectionName: string
+) {
+  try {
+    const orgs = await db.select().from(organizations).limit(1);
+    
+    // Cari ID seksi tujuan
+    let [section] = await db.select().from(committeeSections)
+      .where(eq(committeeSections.sectionName, newSectionName));
+
+    if (!section) {
+      // Buat seksi kalau belum ada (jaga-jaga)
+      [section] = await db.insert(committeeSections).values({ 
+        organizationId: orgs[0].id, 
+        sectionName: newSectionName 
+      }).returning();
+    }
+
+    // Update data panitia ke seksi baru
+    await db.update(eventCommittees)
+      .set({ committeeSectionId: section.id })
+      .where(
+        and(
+          eq(eventCommittees.eventId, eventId),
+          eq(eventCommittees.memberId, memberId)
+        )
+      );
+
+    revalidatePath(`/events/${eventId}/builder`);
+    return { success: true };
+  } catch (error) {
+    console.error("Gagal memindahkan anggota:", error);
+    return { success: false };
+  }
 }
